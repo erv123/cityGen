@@ -1,6 +1,7 @@
 # cityGen
 Arucas script to generate cities
 
+Based on City Generator by ProbableTrain https://github.com/ProbableTrain/MapGenerator
 
 Installation
 
