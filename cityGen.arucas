@@ -1,5 +1,7 @@
 /*
  * CURRENT TODO:
+ *  selection lock/unlock
+ *  /c roads <level> <dsep> <dtest> should only edit parameters if road level already exists
  *  improve how naming works (auto save uses project name so that projects not named default can be saved too)
  *  water
  *  parks
@@ -11,6 +13,7 @@
  *  stop crashes
  * FEATURE WISHLIST:
  *  fix roads after placing (sharp corners, lone missing blocks)
+ *  road middle lines but like configurable and shit
  */
 import * from Minecraft;
 import Json from util.Json;
@@ -410,10 +413,11 @@ cityCommandMap = {
     "name" : "c",
     "subcommands" : {
         "area" : {
-            "<sizeX> <sizeY>" : {
-                "" : fun(sizeX, sizeY){
+            "<sizeX> <sizeZ>" : {
+                "" : fun(sizeX, sizeZ){
                     origin = me.getPos();
-                    mainBuildArea = new BuildArea(origin, new Vec2d(sizeX,sizeY),0);
+                    mainBuildArea = new BuildArea(origin, new Vec2d(sizeX,sizeZ),Math.floor(me.getY()));
+
                     mainBuildArea.displayTensorField();
                 }
             },
@@ -435,6 +439,7 @@ cityCommandMap = {
                             mainBuildArea.displayTensorField();
                             mainBuildArea.displayIsOn = true;
                         }
+                        mainBuildArea.save("default");
                     }
                 },
                 "step <displayStep>" :{
@@ -448,7 +453,7 @@ cityCommandMap = {
                     }
                 }
             },
-            "defaultY <displayY>" :{
+            "defaultY <defaultY>" :{
                 "" : fun(Y){
                     if(nullCheck("main")){
                         mainBuildArea.defaultY = Y;
@@ -663,7 +668,6 @@ cityCommandMap = {
                 "" : fun(){
                     if(nullCheck("main")){
                         mainBuildArea.yeetPlaceholder();
-
                     }
                 }
             }
@@ -792,7 +796,7 @@ cityCommandMap = {
             "type" : "integer",
             "min" : 1
         },
-        "sizeY" :{
+        "sizeZ" :{
             "type" : "integer",
             "min" : 1
         },
@@ -811,7 +815,7 @@ cityCommandMap = {
             "type" : "Double",
             "min" : 1
         },
-        "displayY" :{
+        "defaultY" :{
             "type" : "Double",
             "min" : -64,
             "max" : 320
