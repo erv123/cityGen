@@ -1,0 +1,407 @@
+import * from AdvancedMath;
+//import * from Debug;
+import * from Minecraft;
+
+client = MinecraftClient.getClient();
+me = client.getPlayer();
+world = client.getWorld();
+sides = ["north", "east", "south", "west","floor","roof"];
+
+class Util{
+    static fun floorPos(pos){
+        return new Pos(pos.getX().floor(),pos.getY().floor(),pos.getZ().floor());
+    }
+    
+    static fun mapToString(map){
+        string = "§a{";
+        keys = map.getKeys();
+        foreach(key : keys)
+        {
+            string = string + "§a" +key;
+            string = string + ": ";
+            if(Type.of(map.get(key)).getName()=="Map"){
+                string = string + mapToString(map.get(key));
+            }
+            else if(Type.of(map.get(key)).getName()=="List"){
+                string = string + listToString(map.get(key));
+            }
+            else string = string + "§2" + map.get(key);
+    
+            string = string + "§a, ";
+        }
+        string = string +"§a}";
+        return string;
+    }
+    
+    static fun listToString(list){
+        string = "§1[";
+        foreach(item : list){
+            if(Type.of(item).getName()=="Map"){
+                string = string + mapToString(item);
+            }
+            else if(Type.of(item).getName()=="List"){
+                string = string + listToString(item);
+            }
+            else string = string + "§b" +item;
+    
+            string = string + "§1, ";
+        }
+        string = string+ "§1]";
+        return string;
+    }
+    
+    static fun posFromString(string){
+        string = string.replaceAll('\\(',"");
+        string = string.replaceAll('\\)',"");
+        list = string.split(',');
+        return(new Pos(list.get(0).toNumber(),list.get(1).toNumber(),list.get(2).toNumber()));
+    }
+    static fun listMin(list){
+        min = 1/0;
+        foreach(number:list){
+            if(number<min){
+                min = number;
+            }
+        }
+        return min;
+    }
+    static fun getPosVector(){
+        return new Vec2d(me.getX(),me.getZ());
+    }
+    static fun getYIntersect(y){
+        dy = me.getY()-y;
+        angle = Math.pi/2 - Math.toRadians(me.getPitch());
+        r = dy * Math.tan(angle);
+        if(r<0){
+            return null;
+        }
+        yaw =Math.toRadians(me.getYaw());
+        y = r * Math.cos(angle);    
+        x = -r * Math.sin(angle);
+        return(new Vec2d(x,y).add(Util.getPosVector()));
+    }
+}
+class CallStack{
+    var callStack = {};
+
+    CallStack(){
+
+    }
+    fun addMap(map){
+        foreach(key:map.getKeys()){
+            this.callStack.putIfAbsent(key, []);
+            this.callStack.get(key).addAll(map.get(key));
+        }
+    }
+    fun callAll(){
+        foreach(list:this.callStack.getValues()){
+            foreach(command:list){
+                //print(command);
+                me.say(command);
+                //sleep(50);
+            }
+        }
+    }
+}
+class HeightMap{
+    var defaultLevel;
+
+    HeightMap(defaultLevel){
+        this.defaultLevel = defaultLevel;
+    }
+
+    fun streamlineTo3d(streamline){
+        returnList = [];
+        foreach(vector:streamline){
+            returnList.append(new Pos(vector.x,this.sampleField(vector),vector.y));
+        }
+        return returnList;    
+    } 
+    fun sampleField(point){
+        return this.defaultLevel;
+    }
+}
+class RoadBuilder{
+    var blockList = [["cobbled_deepslate","cobbled_deepslate","cobbled_deepslate","stone"],
+    ["green_stained_glass","green_stained_glass","green_stained_glass","smooth_stone_slab"]];
+    var width = 4;
+    var height = 2;
+    var protectedBlocks = ["green_stained_glass","cobbled_deepslate"];
+
+    var callStack;
+
+    var streamlineGenerator;
+
+    var colorRed;
+    var colorGreen;
+    var colorBlue;
+    var streamlineDisplay = [];
+
+    var nextBiggestRoad = null;
+    var streamlines = [];
+    var level;
+    var params;
+
+    var heightMap;
+    var roadBuilder = null;
+
+    RoadBuilder(streamlineGenerator,nextBiggestRoad,level,heightMap,params){
+        this.callStack = new CallStack();
+        this.params = params;
+        this.level = level;
+        this.streamlineGenerator = streamlineGenerator;
+        this.nextBiggestRoad = nextBiggestRoad;
+        this.heightMap = heightMap;
+        this.colorRed = random(255);
+        this.colorGreen = random(255);
+        this.colorBlue = random(255);
+    }
+
+    fun posToVec2d(pos){
+        return new Vec2d(pos.getX(),pos.getZ());
+    }
+
+    fun placeAlongAllStreamlines(streamlines){
+        foreach(streamline:streamlines){
+            this.placeAlongStreamline(streamline);
+        }
+        this.callStack.callAll();
+    }
+    fun placeAlongStreamline(streamline){
+        commandStack = {};
+        previousSegment = streamline[1];
+        foreach(segment:streamline){
+            t = previousSegment.sub(segment);
+            angle = AdvancedMath.atan2(t) - Math.pi/2;     
+            perpendicularVector = new Vec2d(Math.cos(angle),Math.sin(angle));
+            if(t.x<0)
+            perpendicularVector = new Vec2d(Math.cos(angle),Math.sin(-angle));
+            foreach(level:this.blockList){
+                multiplier = 0;
+                foreach(block:level){
+                    vectorOrigin = new Pos(segment.x,0,segment.y);
+                    x, y, z = [Math.floor(segment.x+perpendicularVector.x*multiplier), Math.floor(this.blockList.indexOf(level)), Math.floor(segment.y+perpendicularVector.y*multiplier)];
+                    x1, y1, z1 = [Math.floor(segment.x-perpendicularVector.x*multiplier), Math.floor(this.blockList.indexOf(level)), Math.floor(segment.y-perpendicularVector.y*multiplier)];
+                    y = y + this.heightMap.sampleField(new Vec2d(x,z));
+                    y1 = y1 + this.heightMap.sampleField(new Vec2d(x1,z1));
+                    commandA = "/setblock " + x + " " + y + " " + z + " " + block;
+                    commandB = "/setblock " + x1 + " " + y1 + " " + z1 + " " + block;
+                    if(!this.protectedBlocks.contains(block)){
+                        commandA = commandA + " keep";
+                        commandB = commandB + " keep";
+                    }
+                    else{
+                        commandA = commandA + " replace";
+                        commandB = commandB + " replace";    
+                    }
+                    key1 = new Pos(x,y,z).toString();
+                    key2 = new Pos(x1,y1,z1).toString();
+                    commandStack.putIfAbsent(key1, []);
+                    commandStack.putIfAbsent(key2, []);
+                    commandStack.get(key1).append(commandA.copy());
+                    commandStack.get(key2).append(commandB.copy());
+                    multiplier++;
+                }
+            }
+            previousSegment = segment;
+        }
+        this.callStack.addMap(commandStack);
+        return commandStack;
+    }
+    fun getStreamlines(){
+        if(len(this.streamlines)==0){
+            this.generateStreamlines();
+        }
+        else{
+            print("Level " + this.level + " already generated");
+        }
+        return this.streamlineGenerator;
+    }
+    fun generateStreamlines(){
+        this.streamlineGenerator.clearStreamlines();
+        if(this.nextBiggestRoad!=null){
+            print("Level " + this.level + " waiting on roads from level " + this.nextBiggestRoad.level);
+            this.streamlineGenerator.addExistingStreamlines(this.nextBiggestRoad.getStreamlines());
+        }
+        print("Generating roads for level " + this.level);
+        this.streamlineGenerator.createAllStreamlines();
+        this.streamlines = this.streamlineGenerator.allStreamlines.copy();
+        print("Roads for level " + this.level+ " are done");
+        this.displayStreamlines();
+    }
+    fun clearStreamlines(){
+        this.streamlineGenerator.clearStreamlines();
+        this.clearStreamlineDisplay();
+    }
+    fun displayStreamlines(){
+        this.clearStreamlineDisplay();
+        streamlines = this.streamlineGenerator.allStreamlines;
+        foreach(streamline:streamlines){
+            posList = this.heightMap.streamlineTo3d(streamline);
+            curve = new Curve(posList);
+            curve.open();
+            curve.setRGB(this.colorRed,this.colorGreen,this.colorBlue);
+            curve.render();
+            this.streamlineDisplay.append(curve);
+        }
+    }
+    fun clearStreamlineDisplay(){
+        foreach(curve:this.streamlineDisplay){
+            curve.stopRendering();
+        }
+        this.streamlineDisplay = [];
+    }
+    fun placeRoads(){
+        if(this.streamlines.isEmpty())
+            this.generateStreamlines();
+        this.placeAlongAllStreamlines(this.streamlines);
+    }
+    fun setColor(r,g,b){
+        this.colorRed = r;
+        this.colorGreen = g;
+        this.colorBlue = b;
+        this.displayStreamlines();
+    }
+    fun saveMap(){
+        saveMap = {
+            "level" : this.level,
+            "dsep" : this.params.dsep,
+            "dtest" : this.params.dtest,
+            "blocks" : this.blockList,
+            "protectedBlocks" : this.protectedBlocks,
+            "width" : this.width,
+            "height" : this.height
+        };
+        return saveMap;
+    }
+    fun initTileBuilder(origin){
+        if(this.roadBuilder!=null)
+            this.roadBuilder.destroy();
+        this.roadBuilder = new RoadAssetBuilder(origin,this.width,this.height,1);
+        this.roadBuilder.blockList = this.blockList;
+        this.roadBuilder.loadBlocks();
+    }
+    fun updateSize(width,height){
+        this.width = width;
+        this.height = height;
+        if(this.roadBuilder!=null){
+            this.roadBuilder.updateSize(width,height);
+        }
+    }
+    fun save(){
+        this.blockList = this.roadBuilder.save();
+    }
+}
+
+class RoadAssetBuilder{
+    var origin;
+    var lenX;
+    var lenY;
+    var lenZ;
+    var pos1;
+    var pos2;
+    var blockList = [];
+    RoadAssetBuilder(pos, lenX, lenY, lenZ){
+        this.origin = Util.floorPos(pos);
+        this.lenX=lenX;
+        this.lenY=lenY;
+        this.lenZ=lenZ;
+        this.pos1 = Util.floorPos(pos);
+        this.pos2 = Util.floorPos(new Pos(pos.getX()+lenX-1,pos.getY()+lenY-1,pos.getZ()+lenZ-1));
+        this.addSide("roof");
+        this.addSide("floor");
+        this.addSide("east");
+        this.addSide("west");    
+    }
+    fun updateSize(width, height){
+        this.noBox();
+        this.lenX = width;
+        this.lenY = height;
+        this.pos2 = new Pos(this.pos1.getX()+this.lenX-1,this.pos1.getY()+this.lenY-1,this.pos1.getZ()+this.lenZ-1);
+        this.addSide("roof");
+        this.addSide("floor");
+        this.addSide("east");
+        this.addSide("west");
+    }
+    fun glassBox(){
+        foreach(side:sides){
+            this.addSide(side);
+        }
+    }
+    fun destroy(){
+        this.noBox();
+        me.say("/fill "+this.pos1.getX()+" "+this.pos1.getY()+" "+this.pos1.getZ()+" "+this.pos2.getX()+" "+this.pos2.getY()+" "+this.pos2.getZ()+" air");
+    }
+    fun noBox(){
+        foreach(side:sides){
+            this.removeSide(side);
+        }
+    }
+    fun addSide(side){
+        switch(side){
+            case "floor" -> {
+                me.say("/fill "+this.pos1.getX()+" "+(Math.min(this.pos1.getY(),this.pos2.getY())-1).toString()+" "+this.pos1.getZ()+" "+this.pos2.getX()+" "+(Math.min(this.pos1.getY(),this.pos2.getY())-1).toString()+" "+this.pos2.getZ()+" glass replace air");
+            }
+            case "roof" -> {
+                me.say("/fill "+this.pos1.getX()+" "+(Math.max(this.pos1.getY(),this.pos2.getY())+1).toString()+" "+this.pos1.getZ()+" "+this.pos2.getX()+" "+(Math.max(this.pos1.getY(),this.pos2.getY())+1).toString()+" "+this.pos2.getZ()+" glass replace air");
+            }
+            case "north" -> {
+                me.say("/fill "+this.pos1.getX()+" "+this.pos1.getY()+" "+(Math.min(this.pos1.getZ(),this.pos2.getZ())-1).toString()+" "+this.pos2.getX()+" "+this.pos2.getY()+" "+(Math.min(this.pos1.getZ(),this.pos2.getZ())-1).toString()+" glass replace air");
+            }
+            case "east" -> {
+                me.say("/fill "+(Math.max(this.pos1.getX(),this.pos2.getX())+1).toString()+" "+this.pos1.getY()+" "+this.pos1.getZ()+" "+(Math.max(this.pos1.getX(),this.pos2.getX())+1).toString()+" "+this.pos2.getY()+" "+this.pos2.getZ()+" glass replace air");
+            }
+            case "south" -> {
+                me.say("/fill "+this.pos1.getX()+" "+this.pos1.getY()+" "+(Math.max(this.pos1.getZ(),this.pos2.getZ())+1).toString()+" "+this.pos2.getX()+" "+this.pos2.getY()+" "+(Math.max(this.pos1.getZ(),this.pos2.getZ())+1).toString()+" glass replace air");
+            }
+            case "west" -> {
+                me.say("/fill "+(Math.min(this.pos1.getX(),this.pos2.getX())-1).toString()+" "+this.pos1.getY()+" "+this.pos1.getZ()+" "+(Math.min(this.pos1.getX(),this.pos2.getX())-1).toString()+" "+this.pos2.getY()+" "+this.pos2.getZ()+" glass replace air");
+            }
+        }
+    }
+    fun removeSide(side){
+        switch(side){
+            case "floor" -> {
+                me.say("/fill "+this.pos1.getX()+" "+(Math.min(this.pos1.getY(),this.pos2.getY())-1).toString()+" "+this.pos1.getZ()+" "+this.pos2.getX()+" "+(Math.min(this.pos1.getY(),this.pos2.getY())-1).toString()+" "+this.pos2.getZ()+" air");
+            }
+            case "roof" -> {
+                me.say("/fill "+this.pos1.getX()+" "+(Math.max(this.pos1.getY(),this.pos2.getY())+1).toString()+" "+this.pos1.getZ()+" "+this.pos2.getX()+" "+(Math.max(this.pos1.getY(),this.pos2.getY())+1).toString()+" "+this.pos2.getZ()+" air");
+            }
+            case "north" -> {
+                me.say("/fill "+this.pos1.getX()+" "+this.pos1.getY()+" "+(Math.min(this.pos1.getZ(),this.pos2.getZ())-1).toString()+" "+this.pos2.getX()+" "+this.pos2.getY()+" "+(Math.min(this.pos1.getZ(),this.pos2.getZ())-1).toString()+" air");
+            }
+            case "east" -> {
+                me.say("/fill "+(Math.max(this.pos1.getX(),this.pos2.getX())+1).toString()+" "+this.pos1.getY()+" "+this.pos1.getZ()+" "+(Math.max(this.pos1.getX(),this.pos2.getX())+1).toString()+" "+this.pos2.getY()+" "+this.pos2.getZ()+" air");
+            }
+            case "south" -> {
+                me.say("/fill "+this.pos1.getX()+" "+this.pos1.getY()+" "+(Math.max(this.pos1.getZ(),this.pos2.getZ())+1).toString()+" "+this.pos2.getX()+" "+this.pos2.getY()+" "+(Math.max(this.pos1.getZ(),this.pos2.getZ())+1).toString()+" air");
+            }
+            case "west" -> {
+                me.say("/fill "+(Math.min(this.pos1.getX(),this.pos2.getX())-1).toString()+" "+this.pos1.getY()+" "+this.pos1.getZ()+" "+(Math.min(this.pos1.getX(),this.pos2.getX())-1).toString()+" "+this.pos2.getY()+" "+this.pos2.getZ()+" air");
+            }
+        }
+    }
+
+    fun loadBlocks(){
+        for(y=0;y<this.lenY;y++){
+            for(x=0;x<this.lenX;x++){
+                block = this.blockList[y][x];
+                x0, y0, z0 = this.origin.toList();
+                me.say("/setblock " + (x0 + x) + " " + (y0 + y) + " " + z0 + " " + block);
+            }
+        }
+    }
+
+    fun save(){
+        returnList = [];
+        for(y=0;y<this.lenY;y++){
+            returnList.append([]);
+            for(x=0;x<this.lenX;x++){
+                block = world.getBlockAt(this.origin.add(new Pos(x,y,0))).getId();
+                returnList[y].append(block);
+            }
+        }
+        this.blockList = returnList;
+        return returnList;
+    }
+}

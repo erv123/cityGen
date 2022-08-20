@@ -1,0 +1,142 @@
+{
+  "origin": "[-33, 63]",
+  "dimensions": "[300, 300]",
+  "tensorFieldStep": 10.0,
+  "defaultY": 63.0,
+  "display": true,
+  "fields": [
+    {
+      "type": 1.0,
+      "center": "[12, 108]",
+      "size": 184.0,
+      "decay": 40.0,
+      "theta": 52.0
+    },
+    {
+      "type": 1.0,
+      "center": "[222, 318]",
+      "size": 276.0,
+      "decay": 9.0,
+      "theta": 60.0
+    },
+    {
+      "type": 1.0,
+      "center": "[222, 108]",
+      "size": 240.0,
+      "decay": 33.0,
+      "theta": 74.0
+    },
+    {
+      "type": 1.0,
+      "center": "[12, 318]",
+      "size": 198.0,
+      "decay": 17.0,
+      "theta": 58.0
+    },
+    {
+      "type": 0.0,
+      "center": "[175.485, 198.699]",
+      "size": 60.0,
+      "decay": 42.0
+    }
+  ],
+  "roads": [
+    {
+      "level": 0.0,
+      "dsep": 400.0,
+      "dtest": 200.0,
+      "blocks": [
+        [
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate"
+        ],
+        [
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "acacia_slab"
+        ]
+      ],
+      "protectedBlocks": [
+        "green_stained_glass",
+        "cobbled_deepslate"
+      ],
+      "width": 7.0,
+      "height": 2.0
+    },
+    {
+      "level": 1.0,
+      "dsep": 100.0,
+      "dtest": 30.0,
+      "blocks": [
+        [
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate"
+        ],
+        [
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "brick_slab"
+        ]
+      ],
+      "protectedBlocks": [
+        "green_stained_glass",
+        "cobbled_deepslate"
+      ],
+      "width": 6.0,
+      "height": 2.0
+    },
+    {
+      "level": 2.0,
+      "dsep": 20.0,
+      "dtest": 15.0,
+      "blocks": [
+        [
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "cobbled_deepslate",
+          "stone"
+        ],
+        [
+          "green_stained_glass",
+          "green_stained_glass",
+          "green_stained_glass",
+          "smooth_stone_slab"
+        ]
+      ],
+      "protectedBlocks": [
+        "green_stained_glass",
+        "cobbled_deepslate"
+      ],
+      "width": 4.0,
+      "height": 2.0
+    }
+  ],
+  "assetEditors": {
+    "roads": {
+      "0": "(-8.0, 73.0, 23.0)",
+      "1": "(-8.0, 73.0, 25.0)",
+      "2": "(-8.0, 73.0, 27.0)"
+    }
+  },
+  "globalProtectedBlocks": [
+    "green_stained_glass",
+    "cobbled_deepslate"
+  ],
+  "placeholderBlock": "green_stained_glass"
+}

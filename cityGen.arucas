@@ -1,0 +1,895 @@
+/*
+ * CURRENT TODO:
+ *  improve how naming works (auto save uses project name so that projects not named default can be saved too)
+ *  water
+ *  parks
+ *  place field at looking (problem is figuring out the workflow to make it smooth)
+ *  prettyPrintStatements (including feedback to commands)
+ *  make block yeeting vanilla (maybe)
+ * ONGOING TODO:
+ *  auto save after all changes
+ *  stop crashes
+ * FEATURE WISHLIST:
+ *  fix roads after placing (sharp corners, lone missing blocks)
+ */
+import * from Minecraft;
+import Json from util.Json;
+import Java from util.Internal;
+import * from LineUtils;
+import * from CityPlace;
+import * from CityGen;
+//import * from Debug;
+import * from AdvancedMath;
+
+client = MinecraftClient.getClient();
+me = client.getPlayer();
+world = client.getWorld();
+
+//global objects
+    class emptyArea{
+        var isEmpty=true;
+        var tesnorFieldY = 0;
+        var protectedBlocks = [];
+    }
+    mainBuildArea = new emptyArea();
+
+    class emptyBasisField{
+        var fieldType = 1;
+        var center;
+        var size;
+        var decay;
+        var theta;
+    }
+    activeBasisField = new emptyBasisField();
+//
+
+//events
+
+    messageSupress = new GameEvent('onReceiveMessage', fun(uuid,message) {
+        if(message.contains("Could not set the block")){
+        GameEvent.cancel();
+        }
+        if(message.contains("No blocks were filled")){
+        GameEvent.cancel();
+        }
+    },true);
+
+    waitingForInput = false;
+    lastInput = null;
+
+    new GameEvent("onSendMessage", fun(message) {
+        if (waitingForInput) {
+            lastInput = message;
+            GameEvent.cancel();
+        }
+    }, true);
+
+    fun chatInput() {
+        waitingForInput = true;
+        while (lastInput == null) {
+            sleep(50);
+        }
+        thisInput = lastInput;
+        waitingForInput = false;
+        lastInput = null;
+        return thisInput;
+    }
+    selectionMode = 0;
+    new GameEvent("onClientTick", fun() {
+        if(!mainBuildArea.isEmpty){
+            compareVector = null;
+            if(selectionMode==0){       
+                compareVector = Util.getPosVector();
+            }
+            else if (selectionMode==1){
+                compareVector = Util.getYIntersect(mainBuildArea.defaultY);
+                if(compareVector == null){
+                    compareVector = Util.getPosVector();
+                }
+            }
+            distances = [];
+            foreach(vector:mainBuildArea.tensorField.basisFields.getKeys()){
+                distances.append(compareVector.distanceTo(vector));
+            }
+            minDistance = Util.listMin(distances);
+            index = distances.indexOf(minDistance);
+            if(index!=-1)
+                activeBasisField = mainBuildArea.tensorField.basisFields.getValues()[distances.indexOf(minDistance)];
+            mainBuildArea.highlightBasisFields();
+        }
+    });
+//
+
+class BuildArea{
+    var TENSOR_SPAWN_SCALE = 0.7;
+    var isEmpty = false;
+    var origin;
+    var dimensions;
+
+    var protectedBlocks = ["green_stained_glass","cobbled_deepslate"];
+    var placeholderBlock = "green_stained_glass";
+
+    var tensorField;
+    var defaultY;
+    var tensorFieldStep = 3;
+    var displayIsOn = true;
+    var tensorDisplay = [];
+
+    var basisFieldDisplay = [];
+    
+
+    var defaultRoadParams = new StreamlineParams(
+       100, //dsep,
+       101, //dtest,
+       0.5, //dstep,
+       1, //dcirclejoin,
+       40, //dlookahead,
+       0.1, //joinangle,
+       3000, //pathIterations,
+       300, //seedTries,
+       0.5, //simplifyTolerance,
+       0); //collideEarly
+    var roads = {}; 
+    var heightMap;
+
+    BuildArea(origin,dimensions, defaultLevel){
+        this.tensorField = new TensorField();
+        if(Type.of(origin).getName()=="Pos")
+            this.origin = new Vec2d(origin.getX(),origin.getZ()).floor();
+        else
+            this.origin = origin.floor();
+        this.dimensions = dimensions;
+        
+        this.heightMap = new HeightMap(defaultLevel);
+        this.defaultY = defaultLevel;
+    }
+    
+    fun addRoadType(dsep, dtest, level){
+        params = this.defaultRoadParams.copy();
+        params.dsep = dsep;
+        params.dtest = dtest;
+        if(this.roads[level]!=null)
+            this.roads[level].clearStreamlineDisplay();
+
+        integrator = new FieldIntegrator(this.tensorField,params);
+        streamlineGenerator =  new StreamlineGenerator(integrator,this.origin,this.dimensions,params);
+        road = new RoadBuilder(streamlineGenerator,this.roads[level-1],level,this.heightMap,params);    
+        road.protectedBlocks = this.protectedBlocks;  
+        this.roads.put(level,road);
+        nextRoad = this.roads[level+1];
+        if(nextRoad!=null)
+            nextRoad.nextBiggestRoad = road;
+        return road;
+    }
+    fun displayTensor(tensor, center){
+        majorVector = tensor.getMajor();
+        //print(tensor.theta);
+        multiplier = this.tensorFieldStep/2;
+        majorA = center.add(new Pos(majorVector.x*multiplier,0,majorVector.y*multiplier)); 
+        majorB = center.subtract(new Pos(majorVector.x*multiplier,0,majorVector.y*multiplier));
+        minorVector = tensor.getMinor();
+        minorA = center.add(new Pos(minorVector.x*multiplier,0,minorVector.y*multiplier)); 
+        minorB = center.subtract(new Pos(minorVector.x*multiplier,0,minorVector.y*multiplier));
+        minorLine = new LineShape(minorA,minorB);
+        minorLine.setColor(0,0,0);
+        minorLine.render();
+        majorLine = new LineShape(majorA,majorB);
+        //majorLineB = new LineShape(majorB,center);
+        majorLine.setColor(0,0,0);
+        majorLine.render();
+        //majorLineB.render();
+        this.tensorDisplay.append(majorLine);
+        this.tensorDisplay.append(minorLine);
+        //this.tensorDisplay.append(majorLineB);
+    }
+    fun clearTensorDisplay(){
+        foreach(line:this.tensorDisplay){
+            line.stopRendering();
+        }
+        this.tensorDisplay = [];
+    }
+    fun displayTensorField(){
+        this.clearTensorDisplay();
+        for(x = this.origin.x; x<this.origin.x+this.dimensions.x; x=x+this.tensorFieldStep){
+            for(z = this.origin.y; z<this.origin.y+this.dimensions.y; z=z+this.tensorFieldStep){
+                tensor = this.tensorField.samplePoint(new Vec2d(x,z));
+                this.displayTensor(tensor,new Pos(x,this.defaultY,z));
+            }
+        }
+    }
+    fun yeetBlocks(){
+        me.say("//pos1 " + this.origin.x.floor()+",-63,"+this.origin.y.floor());
+        x2 = this.origin.x.floor() + this.dimensions.x;
+        y2 = this.origin.y.floor() + this.dimensions.y;
+        me.say("//pos2 " + x2+",320,"+y2);
+        me.say("//replace !air air");
+    }
+    fun yeetPlaceholder(){
+        me.say("//pos1 " + this.origin.x.floor()+",-63,"+this.origin.y.floor());
+        x2 = this.origin.x.floor() + this.dimensions.x;
+        y2 = this.origin.y.floor() + this.dimensions.y;
+        me.say("//pos2 " + x2+",320,"+y2);
+        me.say("//replace "+this.placeholderBlock+" air");
+    }
+    fun save(name){
+        fieldList = [];
+        foreach(field : this.tensorField.basisFields.getValues()){
+            fieldList.append(field.saveMap());
+        }
+        roadList =[];
+        assetEditors = {
+            "roads" : {}
+        };
+        foreach(road : this.roads.getValues()){
+            roadList.append(road.saveMap());
+            if(road.roadBuilder != null){
+                assetEditors["roads"].put(road.level,road.roadBuilder.origin.toString());
+            }
+        }
+        map = {
+            "origin" : this.origin.toString(),
+            "dimensions" : this.dimensions.toString(),
+            "tensorFieldStep" : this.tensorFieldStep,
+            "defaultY" : this.defaultY,
+            "display" : this.displayIsOn,
+            "fields" : fieldList,
+            "roads" : roadList,
+            "assetEditors": assetEditors,
+            "globalProtectedBlocks":this.protectedBlocks,
+            "placeholderBlock" : this.placeholderBlock
+        };
+        directory = new File(client.getScriptsPath()+"/cities");
+        if(!directory.exists()){
+            directory.createDirectory();
+        }
+        Json.fromMap(map).writeToFile(new File(client.getScriptsPath()+"/cities/" + name + ".json"));
+    }
+    fun highlightBasisFields(){
+        this.clearBasisFieldDisplay();
+        foreach(field:this.tensorField.basisFields.getValues()){
+            pos = new Pos(field.center.x,this.defaultY,field.center.y);
+            shape = null;
+            if(field.fieldType == 0){
+                shape = new SphereShape(pos);              
+                shape.setWidth(1);            
+            }
+            else{
+                shape = new BoxShape(pos);
+                shape.setYTilt(field.theta);
+            }
+            shape.setScale(4,4,4);
+            shape.setColor(255,0,0);
+            shape.setOpacity(100);
+            if(field == activeBasisField)
+                shape.setColor(0,255,0);
+            shape.render();
+            this.basisFieldDisplay.append(shape);
+        }
+    }
+    fun clearBasisFieldDisplay(){
+        foreach(shape:this.basisFieldDisplay){
+            shape.stopRendering();
+        }
+        this.basisFieldDisplay = [];
+    }
+    fun addRandomGrid(){
+        center = new Vec2d(random(dimensions.x)+origin.x,random(dimensions.x)+origin.x);
+    }
+    fun setRecommended() {
+        this.tensorField.reset();
+        size = this.dimensions.multiplyScalar(this.TENSOR_SPAWN_SCALE);
+        newOrigin = this.dimensions.multiplyScalar((1 - this.TENSOR_SPAWN_SCALE) / 2).add(this.origin);
+        this.addGridAtLocation(newOrigin);
+        this.addGridAtLocation(newOrigin.copy().add(size));
+        this.addGridAtLocation(newOrigin.copy().add(new Vec2d(size.x, 0)));
+        this.addGridAtLocation(newOrigin.copy().add(new Vec2d(0, size.y)));
+        this.addRadialRandom();
+    }
+    fun randomLocation() {
+        size = this.dimensions.multiplyScalar(this.TENSOR_SPAWN_SCALE);
+        location = new Vec2d(AdvancedMath.random(), AdvancedMath.random()).multiply(size);
+        newOrigin = this.dimensions.multiplyScalar((1 - this.TENSOR_SPAWN_SCALE) / 2);
+        return location.add(this.origin).add(newOrigin);
+    }
+    fun addRadialRandom() {
+        width = this.dimensions.x;
+        this.tensorField.addRadial(this.randomLocation(),random((width / 5)-(width / 10)) + width / 5,random(50));
+    }
+    fun addGridRandom(){
+        this.addGridAtLocation(this.randomLocation());
+    }
+    fun addGridAtLocation(location){
+        width = this.dimensions.x;
+        this.tensorField.addGrid(location,random(width-(width / 4))+width / 4,random(50),random(90));
+    }
+    fun updateProtectedBlocks(){
+        foreach(road:this.roads.getValues()){
+            road.protectedBlocks = this.protectedBlocks;
+        }
+    }
+    fun updateDefaultY(y){
+        this.defaultY = y;
+        this.heightMap.defaultLevel = y;
+    }
+}
+
+
+
+//command functions
+    fun loadProject(name){
+        directory = new File(client.getScriptsPath()+"/cities");
+        if(!directory.exists()){
+            directory.createDirectory();
+        }
+        path = client.getScriptsPath()+"/cities/"+name+".json";
+        file = new File(path);
+        if(!file.exists()){
+            if(name !="default")
+                print("§cProject with the name " + name + " does not exist");
+            return;
+        }
+        projectMap = Json.fromString(file.read()).getValue();
+        //make main build area
+        mainBuildArea = new BuildArea(Vec2d.fromString(projectMap["origin"]),Vec2d.fromString(projectMap["dimensions"]),projectMap["defaultY"]);
+        //main build area settings
+        mainBuildArea.tensorFieldStep = projectMap["tensorFieldStep"];
+        mainBuildArea.defaultY = projectMap["defaultY"];
+        mainBuildArea.displayIsOn = projectMap["display"];
+        mainBuildArea.protectedBlocks = projectMap["globalProtectedBlocks"];
+        mainBuildArea.placeholderBlock = projectMap["placeholderBlock"];
+        //add basis fields
+        foreach(field:projectMap["fields"]){
+            switch(field["type"]){
+                case 0 ->{mainBuildArea.tensorField.addRadial(Vec2d.fromString(field["center"]),field["size"],field["decay"]);}
+                case 1 ->{mainBuildArea.tensorField.addGrid(Vec2d.fromString(field["center"]),field["size"],field["decay"],field["theta"]);}
+            }
+        }
+        //add road types
+        foreach(road:projectMap["roads"]){
+            roadObject = mainBuildArea.addRoadType(road["dsep"],road["dtest"],road["level"]);
+            roadObject.blockList = road["blocks"];
+            roadObject.protectedBlocks = road["protectedBlocks"];
+            roadObject.updateSize(road["width"],road["height"]);
+        }
+        //init road builders
+        
+        roadEditorMap = projectMap["assetEditors"]["roads"];
+        foreach(level:roadEditorMap){
+            pos = Util.posFromString(roadEditorMap[level]);
+            mainBuildArea.roads[level.toNumber()].initTileBuilder(pos);
+        }
+        
+        if(mainBuildArea.displayIsOn){}
+            mainBuildArea.displayTensorField();
+    }
+    loadProject("default");
+
+    checkLevel = 0;
+    checkBlock = null;
+    fun nullCheck(checks...){
+        resultList = [];
+        foreach(check:checks){
+            switch(check){
+                case "main" ->{
+                    resultList.append(mainBuildArea.isEmpty);
+                    if(mainBuildArea.isEmpty)
+                        print("§cBuild area has not been initialized");
+                }
+                case "basis" ->{
+                    resultList.append(activeBasisField==null);
+                    if(activeBasisField==null)
+                        print("§cNo basis fields added");
+                }
+                case "roadLevel" ->{
+                    resultList.append(mainBuildArea.roads[level]==null);
+                    if(mainBuildArea.roads[level]==null)
+                        print("§cNo road type with that level");
+                }
+                case "roads" ->{
+                    resultList.append(mainBuildArea.roads.isEmpty());
+                    if(mainBuildArea.roads.isEmpty())
+                        print("§cNo road types added");
+                }
+                case "protectedBlock" ->{
+                    resultList.append(!mainBuildArea.protectedBlocks.contains(checkBlock));
+                    if(!mainBuildArea.protectedBlocks.contains(checkBlock))
+                        print("§cThat is not a protected block");
+                }
+                case "levelProtectedBlock" ->{
+                    resultList.append(!mainBuildArea.roads[checkLevel].protectedBlocks.contains(checkBlock));
+                    if(!mainBuildArea.roads[checkLevel].protectedBlocks.contains(checkBlock))
+                        print("§cThat is not a protected block for " + checkLevel + " level road");
+                }
+            }
+        }
+        return !resultList.contains(true);
+    }
+//    
+
+cityCommandMap = {
+    "name" : "c",
+    "subcommands" : {
+        "area" : {
+            "<sizeX> <sizeY>" : {
+                "" : fun(sizeX, sizeY){
+                    origin = me.getPos();
+                    mainBuildArea = new BuildArea(origin, new Vec2d(sizeX,sizeY),0);
+                    mainBuildArea.displayTensorField();
+                }
+            },
+            "clear" : {
+                "" : fun(){
+                    if(nullCheck("main")){
+                        mainBuildArea.yeetBlocks();
+                    }
+                }
+            },
+            "display" : {
+                "" : fun(){
+                    if(nullCheck("main")){                   
+                        if (mainBuildArea.displayIsOn){
+                            mainBuildArea.clearTensorDisplay();
+                            mainBuildArea.displayIsOn = false;
+                        }
+                        else{
+                            mainBuildArea.displayTensorField();
+                            mainBuildArea.displayIsOn = true;
+                        }
+                    }
+                },
+                "step <displayStep>" :{
+                    "" : fun(step){
+                        if(nullCheck("main")){
+                            mainBuildArea.tensorFieldStep = step;
+                            if(mainBuildArea.displayIsOn)
+                                mainBuildArea.displayTensorField();
+                            mainBuildArea.save("default");
+                        }
+                    }
+                }
+            },
+            "defaultY <displayY>" :{
+                "" : fun(Y){
+                    if(nullCheck("main")){
+                        mainBuildArea.defaultY = Y;
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();
+                        mainBuildArea.save("default");
+                    }
+                }
+            }
+        },
+        "restore" :{
+            "" : fun(){
+                loadProject("default");
+            },
+            "<name>" : {
+                "" : fun(name){
+                    loadProject(name);
+                }
+            }
+        },
+        "save" :{
+            "" : fun(){
+                if(nullCheck("main")){
+                    mainBuildArea.save("default");
+                }
+            },
+            "<name>" :{
+                "" : fun(name){
+                    if(nullCheck("main")){
+                        mainBuildArea.save(name);
+                    }
+                }
+            }
+        },
+        "field" :{
+            "" : fun(){
+                print("this is supposed to display info but i'm lazy");
+            },
+            "radial <size> <decay>" : {
+                "" : fun(size, decay){
+                    if(nullCheck("main")){
+                        mainBuildArea.tensorField.addRadial(Util.getPosVector(),size,decay);
+                        mainBuildArea.save("default");
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();
+                    }
+                }
+            },
+            "grid <size> <decay> <angle>" :{
+                "" : fun(size, decay, angle){
+                    if(nullCheck("main")){
+                        mainBuildArea.tensorField.addGrid(Util.getPosVector(),size,decay,angle);
+                        mainBuildArea.save("default");
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();
+                    }
+                }
+            },
+            "selection <mode>" :{
+                "" : fun(mode){
+                    switch(mode){
+                        case "closest" ->{selectionMode =0;}
+                        case "lookingAt" ->{selectionMode =1;}
+                    }
+                }
+            },
+            "move" :{
+                "" : fun(){
+                    if(nullCheck("main","basis")){
+                        oldCentre = activeBasisField.center.copy();
+                        activeBasisField.setCentre(Util.getPosVector());
+                        mainBuildArea.tensorField.basisFields.remove(oldCentre);
+                        mainBuildArea.tensorField.addField(activeBasisField);
+                        mainBuildArea.save("default");
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();
+                    }
+                }
+            },
+            "set <variable> <value>" :{
+                "" : fun(variable,value){
+                    if(nullCheck("main","basis")){
+                        switch(variable){
+                            case "size"->{
+                                activeBasisField.setSize(value);
+                            }
+                            case "decay" ->{
+                                activeBasisField.setDecay(value);
+                            }
+                            case "angle" ->{
+                                activeBasisField.setAngle(value);
+                            }
+                        }
+                        mainBuildArea.save("default");
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();                       
+                    }
+                }
+            },
+            "remove" :{
+                "" : fun(){
+                    if(nullCheck("main","basis")){
+                        mainBuildArea.tensorField.removeField(activeBasisField);
+                        mainBuildArea.save("default");
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();
+                    }
+                }
+            },
+            "recommended": {
+                "" : fun(){
+                    if(nullCheck("main")){
+                        mainBuildArea.setRecommended();
+                        mainBuildArea.save("default");
+                        if(mainBuildArea.displayIsOn)
+                            mainBuildArea.displayTensorField();
+                    }
+                }
+            }
+        },
+        "roads" : {
+            "<level>" :{
+                "" : fun(level){
+                    checkLevel = level;
+                    if(nullCheck("main","roadLevel")){
+                        print(Util.mapToString(mainBuildArea.roads[level].saveMap()));
+                    }
+                },
+                "<dsep> <dtest>":{
+                    "" : fun(level, dsep, dtest){
+                        if(nullCheck("main")){
+                            mainBuildArea.addRoadType(dsep,dtest,level);
+                        }
+                    }
+                },
+                "generate" :{
+                    "" : fun(level){
+                        checkLevel = level;
+                        if(nullCheck("main","roadLevel")){
+                            mainBuildArea.roads[level].generateStreamlines();
+                            mainBuildArea.roads[level].displayStreamlines();                      
+                        }
+                    }        
+                },
+                "place" :{
+                    "" : fun(level){
+                        checkLevel = level;
+                        if(nullCheck("main","roadLevel")){
+                            mainBuildArea.roads[level].placeRoads();
+                            //mainBuildArea.displayStreamlines();
+                        }
+                    }        
+                },
+                "clear" :{
+                    "" : fun(level){
+                        checkLevel = level;
+                        if(nullCheck("main","roadLevel")){
+                            mainBuildArea.roads[level].clearStreamlines();
+                        }
+                    }        
+                },
+                "color <r> <g> <b>" :{
+                    "" : fun(level, r, g, b){
+                        checkLevel = level;
+                        if(nullCheck("main","roadLevel")){
+                            mainBuildArea.roads[level].setColor(r,g,b);
+                        }
+                    }  
+                }
+            },
+            "clearAll" :{
+                "" : fun(){
+                    if(nullCheck("main")){
+                        foreach(road:mainBuildArea.roads.getValues()){
+                            road.clearStreamlines();
+                        }
+                    }
+                } 
+            },
+            "placeAll" :{
+                "" : fun(){
+                    if(nullCheck("main")){
+                        foreach(road:mainBuildArea.roads.getValues()){
+                            road.placeRoads();
+                        }
+                    }
+                } 
+            },
+            "recommended" : {
+                "" : fun(){
+                    if(nullCheck("main")){
+                        mainBuildArea.addRoadType(400,200,0);
+                        mainBuildArea.addRoadType(100,30,1);
+                        mainBuildArea.addRoadType(20,15,2);
+                        mainBuildArea.roads[0].setColor(219, 219, 26);
+                        mainBuildArea.roads[1].setColor(255, 255, 255);
+                        mainBuildArea.roads[2].setColor(4, 169, 191);
+                        mainBuildArea.save("default");
+                    }
+                }
+            },
+            "generate": {
+                "" : fun(){
+                    if(nullCheck("main","roads")){
+                        foreach(road:mainBuildArea.roads.getValues()){
+                            road.generateStreamlines();
+                        }
+                    }
+                }
+            },
+            "yeetPlaceholder" : {
+                "" : fun(){
+                    if(nullCheck("main")){
+                        mainBuildArea.yeetPlaceholder();
+
+                    }
+                }
+            }
+        },
+        "assets" :{
+            "roads" : {
+                "<level>" :{
+                    "load":{
+                        "" : fun(level){
+                            checkLevel = level;
+                            if(nullCheck("main","roadLevel")){
+                                mainBuildArea.roads[level].initTileBuilder(me.getPos());
+                                mainBuildArea.save("default");
+                            }
+                        }         
+                    },
+                    "<width> <height>":{
+                        "" : fun(level, w, h){
+                            checkLevel = level;
+                            if(nullCheck("main","roadLevel")){
+                                mainBuildArea.roads[level].updateSize(w,h);
+                                mainBuildArea.save("default");
+                            }
+                        }
+                    },
+                    "save": {
+                        "": fun(level){
+                            checkLevel = level;
+                            if(nullCheck("main","roadLevel")){
+                                mainBuildArea.roads[level].save();
+                                mainBuildArea.save("default");
+                            }
+                        }
+                    },
+                    "clearProtectedBlocks" :{
+                        "": fun(){
+                            checkLevel = level;
+                            if(nullCheck("main","roadLevel")){
+                                mainBuildArea.roads[level].protectedBlocks = [];
+                                mainBuildArea.save("default");
+                            }
+                        }
+                    },
+                    "addProtectedBlock <block>" :{
+                        "": fun(block){
+                            checkLevel = level;
+                            if(nullCheck("main","roadLevel")){
+                                mainBuildArea.roads[level].protectedBlocks.append(block);
+                                mainBuildArea.save("default");
+                            }
+                        }
+                    },
+                    "removeProtectedBlock <protectedBlocks>" :{
+                        "": fun(block){
+                            checkLevel = level;
+                            checkBlock = block;
+                            if(nullCheck("main","levelProtectedBlock","roadLevel")){
+                                mainBuildArea.roads[level].protectedBlocks.remove(mainBuildArea.roads[level].protectedBlock.indexOf(block));
+                                mainBuildArea.save("default");
+                            }
+                        }
+                    }
+                },
+                "load":{
+                    "" : fun(){
+                        if(nullCheck("main","roads")){
+                            foreach(level: mainBuildArea.roads.getKeys()){
+                                pos = me.getPos().add(new Pos(0,0,level*2));
+                                mainBuildArea.roads[level].initTileBuilder(pos);
+                            }
+                            mainBuildArea.save("default");   
+                        }
+                    }         
+                },
+                "<width> <height>":{
+                    "" : fun(w, h){
+                        if(nullCheck("main","roads")){
+                            foreach(road: mainBuildArea.roads.getValues())
+                                road.updateSize(w,h);
+                            mainBuildArea.save("default");
+                        }
+                    }
+                },
+                "save": {
+                    "": fun(){
+                        if(nullCheck("main","roads")){
+                            foreach(road: mainBuildArea.roads.getValues())
+                                road.save();
+                            mainBuildArea.save("default");
+                        }
+                    }
+                },
+                "clearProtectedBlocks" :{
+                    "": fun(){
+                        if(nullCheck("main")){
+                            mainBuildArea.protectedBlocks = [];
+                            mainBuildArea.updateProtectedBlocks();
+                            mainBuildArea.save("default");
+                        }
+                    }
+                },
+                "addProtectedBlock <block>" :{
+                    "": fun(block){
+                        if(nullCheck("main")){
+                            mainBuildArea.protectedBlocks.append(block);
+                            mainBuildArea.updateProtectedBlocks();
+                            mainBuildArea.save("default");
+                        }
+                    }
+                },
+                "removeProtectedBlock <protectedBlocks>" :{
+                    "": fun(block){
+                        checkBlock = block;
+                        if(nullCheck("main","protectedBlock")){
+                            mainBuildArea.protectedBlocks.remove(mainBuildArea.protectedBlock.indexOf(block));
+                            mainBuildArea.updateProtectedBlocks();
+                            mainBuildArea.save("default");
+                        }
+                    }
+                }
+            }
+        }
+    }, 
+    "arguments" : {
+        "sizeX" :{
+            "type" : "integer",
+            "min" : 1
+        },
+        "sizeY" :{
+            "type" : "integer",
+            "min" : 1
+        },
+        "name" : {
+            "type" : "Word",
+            "suggester" : fun(args...){
+                directory = new File(client.getScriptsPath()+"/cities");
+                names = [];
+                foreach(file:directory.getSubFiles()){
+                    names.append(file.getName());
+                }
+                return names;
+            }
+        },
+        "displayStep" :{
+            "type" : "Double",
+            "min" : 1
+        },
+        "displayY" :{
+            "type" : "Double",
+            "min" : -64,
+            "max" : 320
+        },
+        "size" :{
+            "type" : "Double",
+            "min" : 1
+        },
+        "decay" :{
+            "type" : "Double",
+            "min" : 1
+        },
+        "angle" :{
+            "type" : "Double",
+            "min" : 0,
+            "max" : 360
+        },
+        "mode" :{
+            "type" : "Word",
+            "suggests" : ["closest", "lookingAt"]
+        },
+        "value" :{
+            "type" : "Double",
+            "min" : 1
+        },
+        "variable" : {
+            "type" : "Word",
+            "suggester" : fun(args...){
+                if (activeBasisField.type = 1)
+                    return ["size","decay","angle"];
+                else 
+                    return ["size","decay"];
+            }
+        },
+        "r" :{
+            "type" : "Integer",
+            "min" : 0,
+            "max" : 255
+        },
+        "g" :{
+            "type" : "Integer",
+            "min" : 0,
+            "max" : 255
+        },
+        "b" :{
+            "type" : "Integer",
+            "min" : 0,
+            "max" : 255
+        },
+        "level" :{
+            "type" : "Integer",
+            "min" : 0
+        },
+        "dsep" :{
+            "type" : "Double",
+            "min" : 0
+        },
+        "dtest" :{
+            "type" : "Double",
+            "min" : 0
+        },
+        "width" :{
+            "type" : "Integer",
+            "min" : 1
+        },
+        "height" :{
+            "type" : "Integer",
+            "min" : 1
+        },
+        "block" :{
+            "type" : "ItemStack"
+        },
+        "protectedBlocks" :{
+            "type" : "ItemStack",
+            "suggests" : mainBuildArea.protectedBlocks
+        }
+    }
+};
+cityCommand = CommandBuilder.fromMap(cityCommandMap);
+client.addCommand(cityCommand);
+hold();

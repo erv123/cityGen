@@ -1,0 +1,1029 @@
+import * from AdvancedMath;
+//import * from Debug;
+
+class Tensor {
+    var oldTheta;
+    var theta;
+    var matrix = [];
+    var r;
+    Tensor(r, matrix) {
+        // Represent the matrix as a 2 element list
+        // [ 0, 1
+        //   1, -0 ]
+        this.matrix = matrix;
+        this.r = r;
+        this.oldTheta = false;
+        this.theta = this.calculateTheta();
+        
+    }
+
+    static fun fromAngle(angle) {
+        return new Tensor(1, [Math.cos(angle * 4), Math.sin(angle * 4)]);
+    }
+
+    static fun fromVector(vector){
+        t1 = vector.x ^ 2 - vector.y ^ 2;
+        t2 = 2 * vector.x * vector.y;
+        t3 = t1 ^ 2 - t2 ^ 2;
+        t4 = 2 * t1 * t2;
+        return new Tensor(1, [t3, t4]);
+    }
+
+    static fun getZero() {
+        return new Tensor(0, [0, 0]);
+    }
+
+    fun getTheta() {
+        if (this.oldTheta) {
+            this.theta = this.calculateTheta();
+            this.oldTheta = false;
+        }
+
+        return this.theta;
+    }
+
+    fun add(tensor, smooth) {
+        //this.matrix = this.matrix.map((v, i) => v * this.r + tensor.matrix[i] * tensor.r);
+        i=0;
+        foreach(v:this.matrix){
+            this.matrix[i] = v *this.r + tensor.matrix[i] * tensor.r;
+            i++;
+        }
+        if (smooth) {
+            sum = 0;
+            foreach(number:this.matrix){
+                sum = sum + number^2;
+            }
+            this.r = sqrt(sum);
+
+            //this.matrix = this.matrix.map(v => v / this.r);
+            i=0;
+            foreach(v:this.matrix){
+                this.matrix[i] = v / this.r;
+                i++;
+            }
+        } 
+        else {
+            this.r = 2;
+        }
+
+        this.oldTheta = true;
+        return this;
+    }
+
+    fun scale(s) {
+        this.r = this.r * s;
+        this.oldTheta = true;
+        return this;
+    }
+
+    // Radians
+    fun rotate(theta) {
+        if (theta == 0) {
+            return this;
+        }
+        newTheta = this.getTheta() + theta;
+        if (newTheta < Math.pi) {
+            newTheta = newTheta + Math.pi;
+        }
+
+        if (newTheta >= Math.pi) {
+            newTheta = newTheta - Math.pi;
+        }
+
+        this.matrix[0] = Math.cos(2 * newTheta) * this.r;
+        this.matrix[1] = Math.sin(2 * newTheta) * this.r;
+        this.theta = newTheta;
+        return this;
+    }
+
+    fun getMajor() {
+        // Degenerate case
+        if (this.r == 0) {
+            return Vec2d.zeroVector();
+        }
+        return new Vec2d(Math.cos(this.getTheta()), Math.sin(this.getTheta()));
+    }
+
+    fun getMinor() {
+        // Degenerate case
+        if (this.r == 0) {
+            return Vec2d.zeroVector();
+        }
+        angle = this.getTheta() + Math.pi / 2;
+        return new Vec2d(Math.cos(angle), Math.sin(angle));
+    }
+
+    fun calculateTheta() {
+        if (this.r == 0) {
+            return 0;
+        }
+        theta = AdvancedMath.atan2((this.matrix[0]/this.r),(this.matrix[1]/this.r));
+        return theta;
+    }
+}
+
+class BasisField {
+    //0 for radial, 1 for grid
+    var fieldType;
+    var center;
+    var size;
+    var decay;
+    var theta;
+
+    BasisField(center, size, decay) {
+        this.center = center.copy();
+        this.size = size;
+        this.decay = decay;
+        this.fieldType = 0;
+    }
+    BasisField(center, size, decay, theta){
+        this.center = center.copy();
+        this.size = size;
+        this.decay = decay;
+        this.theta = theta;
+        this.fieldType = 1;
+    }
+    fun saveMap(){
+        saveMap = {
+            "type" : this.fieldType,
+            "center" : this.center.toString(),
+            "size" : this.size,
+            "decay" : this.decay,
+            "theta" : this.theta
+        };
+        return saveMap;
+    }
+    fun setCentre(center) {
+        this.center = center.copy();
+    }
+
+    fun getCentre() {
+        return this.center.copy();
+    }
+
+    fun setDecay(decay) {
+        this.decay = decay;
+    }
+
+    fun setSize(size) {
+        this.size = size;
+    }
+
+    fun setTheta(theta){
+        this.theta = theta;
+    }
+
+    fun getTensor(point){
+        switch (this.fieldType) {
+            case 0 ->{
+                t = point.copy().sub(this.center);
+                angle = 0;
+                if(t.x*t.y <=0){
+                    if(t.x>0)
+                    angle = AdvancedMath.atan2(t);
+                    if(t.x<0)
+                    angle = -AdvancedMath.atan2(t);
+                }
+                if(t.x*t.y >0)
+                angle = -AdvancedMath.atan2(t.y,t.x)+Math.pi/2;
+
+                return new Tensor(1, [Math.cos(angle), Math.sin(angle)]);
+            }
+            case 1 ->{
+                cos = Math.cos(2 * this.theta);
+                sin = Math.sin(2 * this.theta);
+                return new Tensor(1, [cos, sin]);
+            }
+        }
+    }
+
+    fun getWeightedTensor(point, smooth) {
+        tensor = this.getTensor(point).scale(this.getTensorWeight(point, smooth));
+        return tensor;
+    }
+
+
+    /**
+     * Interpolates between (0 and 1)^decay
+     */
+    fun getTensorWeight(point, smooth) {
+        normDistanceToCentre = point.copy().sub(this.center).length() / this.size;
+        if (smooth) {
+            return normDistanceToCentre ^ -this.decay;
+        }
+        // Stop (** 0) turning weight into 1, filling screen even when outside 'size'
+        if (this.decay == 0 && normDistanceToCentre >= 1) {
+            return 0;
+        }
+        weight = Math.max(0, (1 - normDistanceToCentre)) ^ this.decay;
+        return weight;
+    }
+}
+
+class NoiseParams {
+    var globalNoise;
+    var noiseSizePark;
+    var noiseAnglePark;  // Degrees
+    var noiseSizeGlobal;
+    var noiseAngleGlobal;
+}
+
+class TensorField {
+    var basisFields = {};
+    var noise;
+    var noiseParams;
+
+    var parks = [];
+    var sea = [];
+    var river = [];
+    var ignoreRiver = false;
+
+    var smooth = false;
+
+    TensorField() {
+        this.noise = new PerlinNoise();
+        this.noiseParams = new NoiseParams();
+    }
+
+    /**
+     * Used when integrating coastline and river
+    */
+    fun enableGlobalNoise(angle, size)  {
+        this.noiseParams.globalNoise = true;
+        this.noiseParams.noiseAngleGlobal = angle;
+        this.noiseParams.noiseSizeGlobal = size;
+    }
+
+    fun disableGlobalNoise()  {
+        this.noiseParams.globalNoise = false;
+    }
+    
+    fun addGrid(center, size, decay, theta)  {
+        grid = new BasisField(center, size, decay, theta);
+        this.addField(grid);
+        return grid;        
+    }
+
+    fun addRadial(center, size, decay)  {
+        radial = new BasisField(center, size, decay);
+        this.addField(radial);
+        return radial;
+    }
+
+    fun addField(field)  {
+        this.basisFields.put(field.center,field);
+    }
+
+    fun removeField(field)  {
+        this.basisFields.remove(field.center);
+    }
+
+    fun reset(){
+        this.basisFields = {};
+        this.parks = [];
+        this.sea = [];
+        this.river = [];
+    }
+    /*
+    fun getCentrePoints(){
+        centerPoints = [];
+        foreach(field: this.basisFields){
+            centerPoints.append(field.center);
+        }
+        return centerPoints;
+    }
+    */
+
+    fun getBasisFields(){
+        return this.basisFields;
+    }
+
+    fun samplePoint(point) {
+        /*
+        if (!this.onLand(point)) {
+            // Degenerate point
+            return Tensor.getZero();
+        }
+        */
+        // Default field is a grid
+        if (len(this.basisFields) == 0) {
+            return new Tensor(1, [0, 0]);
+        }
+
+        tensorAcc = Tensor.getZero();
+        //this.basisFields.forEach(field => tensorAcc.add(field.getWeightedTensor(point, this.smooth), this.smooth));
+
+        foreach(field:this.basisFields.getValues()){
+            tensorAcc.add(field.getWeightedTensor(point,this.smooth),this.smooth);
+        }
+        // Add rotational noise for parks - range -pi/2 to pi/2
+        /*
+        if (this.parks.some(p => PolygonUtil.insidePolygon(point, p))) {
+            // TODO optimise insidePolygon e.g. distance
+            tensorAcc.rotate(this.getRotationalNoise(point, this.noiseParams.noiseSizePark, this.noiseParams.noiseAnglePark));
+        }
+        
+        if (this.noiseParams.globalNoise) {
+            tensorAcc.rotate(this.getRotationalNoise(point, this.noiseParams.noiseSizeGlobal, this.noiseParams.noiseAngleGlobal));
+        }
+        */
+        return tensorAcc;
+    }
+
+    /**
+     * Noise Angle is in degrees
+     */
+    fun getRotationalNoise(point, noiseSize, noiseAngle) {
+        return this.noise.calculatePerlinValue(point.x / noiseSize, point.y / noiseSize) * noiseAngle * Math.PI / 180;
+    }
+    /*
+    fun onLand(point) {
+        inSea = PolygonUtil.insidePolygon(point, this.sea);
+        if (this.ignoreRiver) {
+            return !inSea;
+        }
+        return !inSea && !PolygonUtil.insidePolygon(point, this.river);
+    }
+
+    fun inParks(point) {
+        for (const p of this.parks) {
+            if (PolygonUtil.insidePolygon(point, p)) return true;
+        }
+        return false;
+    }
+    */
+}
+
+class GridStorage {
+
+    var gridDimensions;
+    var grid;
+    var dstep;
+    var dsep;
+    var dsepSq;
+    var worldDimensions;
+    var origin;
+
+    GridStorage (worldDimensions, origin,dsep) {
+        this.worldDimensions = worldDimensions;
+        this.origin = origin;
+        this.dsep = dsep;
+        this.dsepSq = this.dsep ^ 2;
+        this.gridDimensions = worldDimensions.copy().divideScalar(this.dsep);
+        this.grid = [];
+        for (x = 0; x < this.gridDimensions.x; x++) {
+            this.grid.append([]);
+            for (y = 0; y < this.gridDimensions.y; y++) {
+                this.grid[x].append([]);
+            }
+        }
+    }
+
+    /**
+     * Add all samples from another grid to this one
+     */
+    fun addAll(gridStorage) {
+        foreach (row : gridStorage.grid) {
+            foreach(cell : row) {
+                foreach (sample : cell) {
+                    this.addSample(sample);        
+                }
+            }
+        }
+    }
+
+    fun addPolyline(line){
+        foreach (v : line) {
+            this.addSample(v);
+        }
+    }
+
+    /**
+     * Does not enforce separation
+     * Does not clone
+     */
+    fun addSample(v){
+        coords = this.getSampleCoords(v);
+        this.grid[coords.x][coords.y].append(v);
+    }
+
+    fun addSample(v, coords){
+        this.grid[coords.x][coords.y].append(v);
+    }
+    /**
+     * Tests whether v is at least d away from samples
+     * Performance very important - this is called at every integration step
+     * @param dSq=this.dsepSq squared test distance
+     * Could be dtest if we are integrating a streamline
+     */
+    fun isValidSample(v){
+        this.isValidSample(v,this.dsq);
+    }
+    fun isValidSample(v,dsq) {
+        // Code duplication with this.getNearbyPoints but much slower when calling
+        // this.getNearbyPoints due to array creation in that method
+
+        coords = this.getSampleCoords(v);
+
+        // Check samples in 9 cells in 3x3 grid
+        for (x = -1; x <= 1; x++) {
+            for (y = -1; y <= 1; y++) {
+                cell = coords.copy().add(new Vec2d(x, y));
+                if (!this.vectorOutOfBounds(cell, this.gridDimensions)) {
+                    if (!this.vectorFarFromVectors(v, this.grid[cell.x][cell.y], dsq)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+    
+    /**
+     * Test whether v is at least d away from vectors
+     * Performance very important - this is called at every integration step
+     * @param {number}   dSq     squared test distance
+     */
+    fun vectorFarFromVectors(v, vectors, dSq) {
+        foreach (sample : vectors) {
+            if (sample != v) {
+                distanceSq = sample.distanceToSquared(v);
+                if (distanceSq < dSq) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Returns points in cells surrounding v
+     * Results include v, if it exists in the grid
+     * @param {number} returns samples (kind of) closer than distance - returns all samples in 
+     * cells so approximation (square to approximate circle)
+     */
+    fun getNearbyPoints(v, distance){
+        radius = Math.ceil((distance/this.dsep) - 0.5);
+        coords = this.getSampleCoords(v);
+        out = [];
+        for (x = -1 * radius; x <= 1 * radius; x++) {
+            for (y = -1 * radius; y <= 1 * radius; y++) {
+                cell = coords.copy().add(new Vec2d(x, y));
+                if (!this.vectorOutOfBounds(cell, this.gridDimensions)) {
+                    foreach (v2 : this.grid[cell.x][cell.y]) {
+                        out.append(v2);
+                    }
+                }
+            }
+        }
+
+        return out;
+    }
+
+    fun worldToGrid(v) {
+        return v.copy().sub(this.origin);
+    }
+
+    fun gridToWorld(v) {
+        return v.copy().add(this.origin);
+    }
+
+    fun vectorOutOfBounds(gridV, bounds){
+        return (gridV.x < 0 || gridV.y < 0 ||
+            gridV.x >= bounds.x || gridV.y >= bounds.y);
+    }
+
+    /**
+     * @return {Vector}   Cell coords corresponding to vector
+     * Performance important - called at every integration step
+     */
+    fun getSampleCoords(worldV){
+        v = this.worldToGrid(worldV);
+        if (this.vectorOutOfBounds(v, this.worldDimensions)) {
+            return Vec2d.zeroVector();
+        }
+        return new Vec2d(
+            Math.floor(v.x / this.dsep),
+            Math.floor(v.y / this.dsep)
+        );
+    }
+}
+
+
+class FieldIntegrator {
+    var field;
+    var params;
+    
+    FieldIntegrator(field,params) {
+        this.field = field;
+        this.params = params;
+    }
+    
+    fun sampleFieldVector(point, major) {
+        tensor = this.field.samplePoint(point);
+        if (major) return tensor.getMajor();
+        return tensor.getMinor();
+    }
+    /*
+    onLand(point: Vector) {
+        return this.field.onLand(point);
+    }
+    */
+    
+    fun integrate(point, major) {
+        k1 = this.sampleFieldVector(point, major);
+        k23 = this.sampleFieldVector(point.copy().add(Vec2d.fromScalar(this.params.dstep / 2)), major);
+        k4 = this.sampleFieldVector(point.copy().add(Vec2d.fromScalar(this.params.dstep)), major);
+        v = k1.add(k23.multiplyScalar(4)).add(k4).multiplyScalar(this.params.dstep / 6);
+        return k1.add(k23.multiplyScalar(4)).add(k4).multiplyScalar(this.params.dstep / 6);
+    }
+}
+
+
+class StreamlineIntegration {
+    var seed;
+    var originalDir;
+    var streamline;
+    var previousDirection;
+    var previousPoint;
+    var valid;
+    StreamlineIntegration(seed, originalDir,streamline,previousDirection,previousPoint,valid){
+        this.seed = seed;
+        this.originalDir = originalDir;
+        this.streamline = streamline;
+        this.previousDirection = previousDirection;
+        this.previousPoint = previousPoint;
+        this.valid = valid;
+    }
+}
+class StreamlineParams {
+    var dsep;  // Streamline seed separating distance
+    var dtest;  // Streamline integration separating distance
+    var dstep;  // Step size
+    var dcirclejoin;  // How far to look to join circles - (e.g. 2 x dstep)
+    var dlookahead;  // How far to look ahead to join up dangling
+    var joinangle;  // Angle to join roads in radians
+    var pathIterations;  // Path integration iteration limit
+    var seedTries;  // Max failed seeds
+    var simplifyTolerance;
+    var collideEarly;  // Chance of early collision 0-1
+    StreamlineParams(dsep,dtest,dstep,dcirclejoin,dlookahead,joinangle,pathIterations,seedTries,simplifyTolerance,collideEarly){
+        this.dsep = dsep;  // Streamline seed separating distance
+        this.dtest = dtest;  // Streamline integration separating distance
+        this.dstep = dstep;  // Step size
+        this.dcirclejoin = dcirclejoin;  // How far to look to join circles - (e.g. 2 x dstep)
+        this.dlookahead = dlookahead;  // How far to look ahead to join up dangling
+        this.joinangle = joinangle;  // Angle to join roads in radians
+        this.pathIterations = pathIterations;  // Path integration iteration limit
+        this.seedTries = seedTries;  // Max failed seeds
+        this.simplifyTolerance = simplifyTolerance;
+        this.collideEarly = collideEarly;  // Chance of early collision 0-1
+    }
+    fun copy(){
+        return new StreamlineParams(this.dsep,this.dtest,this.dstep,this.dcirclejoin,this.dlookahead,this.joinangle,this.pathIterations,this.seedTries,this.simplifyTolerance,this.collideEarly);
+    }
+}
+
+/**
+ * Creates polylines that make up the roads by integrating the tensor field
+ * See the paper 'Interactive Procedural Street Modeling' for a thorough explanation
+ */
+class StreamlineGenerator {
+    var SEED_AT_ENDPOINTS = false;
+    var NEAR_EDGE = 3;  // Sample near edge
+    
+    var majorGrid;
+    var minorGrid;
+    var paramsSq;
+
+    // How many samples to skip when checking streamline collision with itself
+    var nStreamlineStep;
+    // How many samples to ignore backwards when checking streamline collision with itself
+    var nStreamlineLookBack;
+    var dcollideselfSq;
+
+    var candidateSeedsMajor = [];
+    var candidateSeedsMinor = [];
+
+    var streamlinesDone = true;
+    var resolve; //: () => void
+    var lastStreamlineMajor = true;
+
+    var allStreamlines = [];
+    var streamlinesMajor = [];
+    var streamlinesMinor = [];
+    //var allStreamlinesSimple = [];  // Reduced vertex count
+
+    var params;
+    var origin;
+    var worldDimensions;
+    var integrator;
+    /**
+     * Uses world-space coordinates
+     */
+    StreamlineGenerator(integrator, origin, worldDimensions, params) {
+        this.integrator = integrator;
+        this.origin = origin;
+        this.worldDimensions = worldDimensions;
+        this.params = params;
+        if (params.dstep > params.dsep) {
+            print("STREAMLINE SAMPLE DISTANCE BIGGER THAN DSEP");
+        }
+
+        // Enforce test < sep
+        params.dtest = Math.min(params.dtest, params.dsep);
+
+        // Needs to be less than circlejoin
+        this.dcollideselfSq = (params.dcirclejoin / 2) ^ 2;
+        this.nStreamlineStep = Math.floor(params.dcirclejoin / params.dstep);
+        this.nStreamlineLookBack = 2 * this.nStreamlineStep;
+        this.majorGrid = new GridStorage(this.worldDimensions, this.origin, params.dsep);
+        this.minorGrid = new GridStorage(this.worldDimensions, this.origin, params.dsep);
+        this.setParamsSq();
+    }
+
+    fun clearStreamlines() {
+        //this.allStreamlinesSimple = [];
+        this.streamlinesMajor = [];
+        this.streamlinesMinor = [];
+        this.allStreamlines = [];
+    }
+    /**
+     * Edits streamlines
+     */
+    fun joinDanglingStreamlines() {
+        // TODO do in update method
+        foreach (major : [true, false]) {
+            foreach (streamline : this.streamlines(major)) {
+                // Ignore circles
+                if (streamline[0] == streamline[len(streamline) - 1]) {
+                    continue;
+                }
+
+                newStart = this.getBestNextPoint(streamline[0], streamline[4], streamline);
+                if (newStart != null) {
+                    foreach (p : this.pointsBetween(streamline[0], newStart, this.params.dstep)) {
+                        [p].addAll(streamline);
+                        this.grid(major).addSample(p);
+                    }
+                }
+
+                newEnd = this.getBestNextPoint(streamline[len(streamline) - 1], streamline[len(streamline) - 4], streamline);
+                if (newEnd != null) {
+                    foreach (p : this.pointsBetween(streamline[len(streamline) - 1], newEnd, this.params.dstep)) {
+                        streamline.append(p);
+                        this.grid(major).addSample(p);
+                    }
+                }
+            }
+        }
+
+        // Reset simplified streamlines
+        /*this.allStreamlinesSimple = [];
+        foreach (s : this.allStreamlines) {
+            this.allStreamlinesSimple.append(this.simplifyStreamline(s));
+        }
+        */
+    }
+
+    /**
+     * Returns array of points from v1 to v2 such that they are separated by at most dsep
+     * not including v1
+     */
+    fun pointsBetween(v1, v2, dstep) {
+        d = v1.distanceTo(v2);
+        nPoints = Math.floor(d / dstep);
+        if (nPoints == 0) return [];
+
+        stepVector = v2.copy().sub(v1);
+
+        out = [];
+        i = 1;
+        next = v1.copy().add(stepVector.copy().multiplyScalar(i / nPoints));
+        for (i = 1; i <= nPoints; i++) {
+            if (this.integrator.integrate(next, true).lengthSq() > 0.001) {  // Test for degenerate point
+                out.append(next);
+            } else {
+                return out;
+            }
+            next = v1.copy().add(stepVector.copy().multiplyScalar(i / nPoints));
+        }
+        return out;
+    }
+
+
+    /**
+     * Gets next best point to join streamline
+     * returns null if there are no good candidates
+     */
+    fun getBestNextPoint(point, previousPoint, streamline) {
+        nearbyPoints = this.majorGrid.getNearbyPoints(point, this.params.dlookahead);
+        nearbyPoints.addAll(this.minorGrid.getNearbyPoints(point, this.params.dlookahead));
+        direction = point.copy().sub(previousPoint);
+
+        closestSample = null;
+        closestDistance = 1/0;
+
+        foreach (sample : nearbyPoints) {
+            if (!sample.equals(point) && !sample.equals(previousPoint)) {// && !streamline.includes(sample)) {
+                differenceVector = sample.copy().sub(point);
+                if (differenceVector.dot(direction) < 0) {
+                    // Backwards
+                    continue;
+                }
+                
+                // Acute angle between vectors (agnostic of CW, ACW)
+                distanceToSample = point.distanceToSquared(sample);
+                if (distanceToSample < 2 * this.paramsSq.dstep) {
+                    closestSample = sample;
+                    break;
+                }
+                angleBetween = Math.abs(Vector.angleBetween(direction, differenceVector));
+
+                // Filter by angle
+                if (angleBetween < this.params.joinangle && distanceToSample < closestDistance) {
+                    closestDistance = distanceToSample;
+                    closestSample = sample;
+                }
+            }
+        }
+
+        // TODO is reimplement simplify-js to preserve intersection points
+        //  - this is the primary reason polygons aren't found
+        // If trying to find intersections in the simplified graph
+        // prevent ends getting pulled away from simplified lines
+        if (closestSample != null) {
+            closestSample = closestSample.copy().add(direction.setLength(this.params.simplifyTolerance * 4));
+        }
+
+        return closestSample;
+    }
+
+
+    /**
+     * Assumes s has already generated
+     */
+    fun addExistingStreamlines(s) {
+        this.majorGrid.addAll(s.majorGrid);
+        this.minorGrid.addAll(s.minorGrid);
+    }
+
+    fun setGrid(s) {
+        this.majorGrid = s.majorGrid;
+        this.minorGrid = s.minorGrid;
+    }
+
+    /**
+     * returns true if state updates
+    
+
+    fun update() {
+        if (!this.streamlinesDone) {
+            this.lastStreamlineMajor = !this.lastStreamlineMajor;
+            if (!this.createStreamline(this.lastStreamlineMajor)) {
+                this.streamlinesDone = true;
+                //this.resolve();
+            }
+            return true;
+        }
+
+        return false;
+    }
+    */
+    /**
+     * All at once - will freeze if dsep small
+    */
+    fun createAllStreamlines() {
+        this.streamlinesDone = false;
+        major = true;
+        while (this.createStreamline(major)) {
+            major = !major;
+        }
+        this.streamlinesDone = true;
+    }
+    /*
+    fun simplifyStreamline(streamline) {
+        simplified = [];
+        foreach (point : Simplify2d.simplify(streamline, this.params.simplifyTolerance)) {
+            simplified.append(new Vec2d(point.x, point.y));
+        }
+        return simplified;
+    }
+    */
+    /**
+     * Finds seed and creates a streamline from that point
+     * Pushes new candidate seeds to queue
+     * @return {Vector[]} returns false if seed isn't found within params.seedTries
+     */
+    fun createStreamline(major) {
+        seed = this.getSeed(major);
+        if (seed == null) {
+            return false;
+        }
+        streamline = this.integrateStreamline(seed, major);
+        if (this.validStreamline(streamline)) {
+            this.grid(major).addPolyline(streamline);
+            this.streamlines(major).append(streamline);
+            this.allStreamlines.append(streamline);
+
+           // this.allStreamlinesSimple.append(this.simplifyStreamline(streamline));
+
+            // Add candidate seeds
+            if (!streamline[0].equals(streamline[len(streamline) - 1])) {
+                this.candidateSeeds(!major).append(streamline[0]);
+                this.candidateSeeds(!major).append(streamline[len(streamline) - 1]);
+            }
+        }
+
+        return true;
+    }
+
+    fun validStreamline(s) {
+        return len(s) > 5;
+    } 
+
+    fun setParamsSq(){
+        this.paramsSq = new StreamlineParams(this.params.dsep^2,this.params.dtest^2, this.params.dstep^2,this.params.dcirclejoin^2,this.params.dlookahead^2,this.params.joinangle^2,this.params.pathIterations^2,this.params.seedTries^2,this.params.simplifyTolerance^2,this.params.collideEarly^2);
+    }
+
+    fun samplePoint() {
+        // TODO better seeding scheme
+        return new Vec2d(AdvancedMath.random() * this.worldDimensions.x, AdvancedMath.random() * this.worldDimensions.y).add(this.origin);
+    }
+ 
+    /**
+     * Tries this.candidateSeeds first, then samples using this.samplePoint
+     */
+    fun getSeed(major) {
+        // Candidate seeds first
+        if (this.SEED_AT_ENDPOINTS && this.candidateSeeds(major).length > 0) {
+            while (this.candidateSeeds(major).length > 0) {
+                seeds = this.candidateSeeds(major); 
+                seed = seeds.remove(len(seeds)-1);
+                if (this.isValidSample(major, seed, this.paramsSq.dsep,false)) {
+                    return seed;
+                }
+            }
+        }
+
+        seed = this.samplePoint();
+        i = 0;
+        while (!this.isValidSample(major, seed, this.paramsSq.dsep,false)) {
+            if (i >= this.params.seedTries) {
+                return null;
+            }
+            seed = this.samplePoint();
+            i++;
+        }
+        return seed;
+    }
+
+    fun isValidSample(major, point, dSq, bothGrids) {
+        // dSq = dSq * point.distanceToSquared(Vector.zeroVector());
+        gridValid = this.grid(major).isValidSample(point, dSq);
+        if (bothGrids) {
+            gridValid = gridValid && this.grid(!major).isValidSample(point, dSq);
+        }
+        return /*this.integrator.onLand(point) &&*/ gridValid;
+    }
+
+    fun candidateSeeds(major) {
+        if(major)
+            return this.candidateSeedsMajor;
+        else
+            return this.candidateSeedsMinor;
+    }
+
+    fun streamlines(major){
+        if(major)
+            return this.streamlinesMajor;
+        else
+            return this.streamlinesMinor;
+    }
+
+    fun grid(major){
+        if(major)
+            return this.majorGrid;
+        else
+            return this.minorGrid;
+    }
+
+    fun pointInBounds(v) {
+        return (v.x >= this.origin.x
+            && v.y >= this.origin.y
+            && v.x < this.worldDimensions.x + this.origin.x
+            && v.y < this.worldDimensions.y + this.origin.y
+        );
+    }
+
+
+    /**
+     * Tests whether streamline has turned through greater than 180 degrees
+     */
+    fun streamlineTurned(seed, originalDir, point, direction) {
+        if (originalDir.dot(direction) < 0) {
+            // TODO optimise
+            perpendicularVector = new Vec2d(originalDir.y, -originalDir.x);
+            isLeft = point.copy().sub(seed).dot(perpendicularVector) < 0;
+            directionUp = direction.dot(perpendicularVector) > 0;
+            return isLeft == directionUp;
+        }
+        return false;
+    }
+
+    /**
+     * // TODO this doesn't work well - consider something disallowing one direction (F/B) to turn more than 180 deg
+     * One step of the streamline integration process
+     */
+    fun streamlineIntegrationStep(params, major, collideBoth) {
+        if (params.valid) {
+            params.streamline.append(params.previousPoint);
+            nextDirection = this.integrator.integrate(params.previousPoint, major);
+            //Debug.breakPoint("integrateStep",nextDirection);
+            // Stop at degenerate point
+
+            if (nextDirection.lengthSq() < 0.01) {
+                params.valid = false;
+                return;
+            }
+
+            // Make sure we travel in the same direction
+            if (nextDirection.dot(params.previousDirection) < 0) {
+                nextDirection = nextDirection.negate();
+            }
+
+            nextPoint = params.previousPoint.copy().add(nextDirection);
+
+            // Visualise stopping points
+            // if (this.streamlineTurned(params.seed, params.originalDir, nextPoint, nextDirection)) {
+            //     params.valid = false;
+            //     params.streamline.append(Vector.zeroVector());
+            // }
+            test1 = this.pointInBounds(nextPoint);
+            test2 = this.isValidSample(major, nextPoint, this.paramsSq.dtest, collideBoth);
+            test3 = !this.streamlineTurned(params.seed, params.originalDir, nextPoint, nextDirection);
+            if (test1 && test2 && test3) {
+                params.previousPoint = nextPoint;
+                params.previousDirection = nextDirection;
+            } else {
+                // One more step
+                params.streamline.append(nextPoint);
+                params.valid = false;
+            }
+        }
+    }
+    fun reverse(list){
+        length = len(list);
+        returnList = [];
+        for(i=0;i<length;i++){
+            returnList.append(list[length-i-1]);
+        }
+        return returnList;
+    }
+    /**
+     * By simultaneously integrating in both directions we reduce the impact of circles not joining
+     * up as the error matches at the join
+     */
+    fun integrateStreamline(seed, major){
+        count = 0;
+        pointsEscaped = false;  // True once two integration fronts have moved dlookahead away
+
+        // Whether or not to test validity using both grid storages
+        // (Collide with both major and minor)
+        collideBoth = AdvancedMath.random() < this.params.collideEarly;
+
+        d = this.integrator.integrate(seed, major);
+        forwardParams = new StreamlineIntegration(seed,d,[seed],d,seed.copy().add(d),true);
+
+        forwardParams.valid = this.pointInBounds(forwardParams.previousPoint);
+        negD = d.copy().negate();
+        backwardParams = new StreamlineIntegration(seed,negD,[],negD,seed.copy().add(negD),true);
+
+        backwardParams.valid = this.pointInBounds(backwardParams.previousPoint);
+        while (count < this.params.pathIterations && (forwardParams.valid || backwardParams.valid)) {
+            this.streamlineIntegrationStep(forwardParams, major, collideBoth);
+            this.streamlineIntegrationStep(backwardParams, major, collideBoth);
+
+            // Join up circles
+            sqDistanceBetweenPoints = forwardParams.previousPoint.distanceToSquared(backwardParams.previousPoint);
+
+            if (!pointsEscaped && sqDistanceBetweenPoints > this.paramsSq.dcirclejoin) {
+                pointsEscaped = true;
+            }
+
+            if (pointsEscaped && sqDistanceBetweenPoints <= this.paramsSq.dcirclejoin) {
+                forwardParams.streamline.append(forwardParams.previousPoint);
+                forwardParams.streamline.append(backwardParams.previousPoint);
+                backwardParams.streamline.append(backwardParams.previousPoint);
+                break;
+            }
+            count++;
+        }
+
+        fullStreamline  = this.reverse(backwardParams.streamline).addAll(forwardParams.streamline);
+        return fullStreamline;
+    }
+}

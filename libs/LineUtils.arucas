@@ -1,0 +1,177 @@
+class LineManager {
+    var lines = [];
+    var r; var g; var b;
+    var opacity;
+    var renderThroughBlocks;
+
+    LineManager(r, g, b, opacity, rtb) {
+        this.r = r; this.g = g; this.b = b;
+        this.opacity = opacity;
+        this.renderThroughBlocks = rtb;
+    }
+
+    fun clearLines() {
+        foreach (line : this.lines) {
+            line.stopRendering();
+        }
+        this.lines.clear();
+    }
+
+    fun addPosition(x1,y1,z1, x2,y2,z2) {
+        startPoint = new Pos(x1, y1, z1);
+        endPoint = new Pos(x2, y2, z2);
+
+        line = new LineShape(startPoint, endPoint);
+        line.setColour(this.r, this.g, this.b);
+        line.setOpacity(this.opacity);
+        line.setOutlinePixelWidth(0.1);  
+        line.setRenderThroughBlocks(this.renderThroughBlocks);
+        line.render();
+
+        this.lines.append(line);
+    }
+    fun addPosition(startPoint, endPoint) {
+        if(Type.of(startPoint).getName()=="List"){
+            startPoint = new Pos(startPoint);
+        }
+        if(Type.of(endPoint).getName()=="List"){
+            endPoint = new Pos(endPoint);
+        }
+        line = new LineShape(startPoint, endPoint);
+        line.setColour(this.r, this.g, this.b);
+        line.setOpacity(this.opacity);
+        line.setRenderThroughBlocks(this.renderThroughBlocks);
+        this.lines.append(line);
+    }
+    fun render(){
+        foreach(line:this.lines){
+            line.render();
+        }
+    }
+    fun stopRendering(){
+        foreach(line:this.lines){
+            line.stopRendering();
+        }
+    }
+    fun update(){
+        foreach(line:this.lines){
+            line.setColour(this.r, this.g, this.b);
+            line.setOpacity(this.opacity);
+            line.setRenderThroughBlocks(this.renderThroughBlocks);
+        }
+    }
+}
+
+class Curve {
+    var posList;
+    var closed = false;
+    var lineManager;
+
+    static fun generateLines(posList){
+        lineManager = new LineManager(255,255,255,255,false);
+        for(i = 0; i < len(posList);i++){
+            if(i == len(posList)-1){
+                lineManager.addPosition(posList[i],posList[0]);
+            }
+            else{
+                lineManager.addPosition(posList[i],posList[i+1]);
+            }
+        }
+        lineManager.render();
+    }
+    static fun generateLines(posList, closed){
+        lineManager = new LineManager(255,255,255,255,false);
+        for(i = 0; i < len(posList);i++){
+            if(i == len(posList)-1){
+                if(closed){
+                    lineManager.addPosition(posList[i],posList[0]);
+                }
+            }
+            else{
+                lineManager.addPosition(posList[i],posList[i+1]);
+            }
+        }
+        lineManager.render();
+    }
+    
+    Curve(posList){
+        this.posList = posList;
+        this.lineManager = new LineManager(255,255,255,255,false);
+        this.generateLines();
+    }
+    fun closed(){
+        this.closed = true;
+        this.generateLines();
+    }
+    
+    fun open(){
+        this.closed = false;
+        this.generateLines();
+    }
+    fun generateLines(){
+        this.lineManager.clearLines();
+        for(i = 0; i < len(this.posList);i++){
+            if(i == len(this.posList)-1){
+                if(this.closed){
+                    this.lineManager.addPosition(this.posList[i],this.posList[0]);
+                }
+            }
+            else{
+                this.lineManager.addPosition(this.posList[i],this.posList[i+1]);
+            }
+        }
+    }
+    fun render(){
+        this.lineManager.render();
+    }
+    fun stopRendering(){
+        this.lineManager.stopRendering();
+    }
+    fun setRGB(r,g,b){
+        this.lineManager.r = r;
+        this.lineManager.g = g;
+        this.lineManager.b = b;
+        this.lineManager.update();
+    }
+    fun setRed(r){
+        this.lineManager.r = r;
+        this.lineManager.update();
+    }
+    fun setGreen(g){
+        this.lineManager.g = g;
+        this.lineManager.update();
+    }
+    fun setBlue(b){
+        this.lineManager.b = b;
+        this.lineManager.update();
+    }
+    fun getRGB(){
+        return [this.lineManager.r,this.lineManager.g,this.lineManager.b];
+    }
+    fun getRed(){
+        return this.lineManager.r;
+    }
+    fun getGreen(){
+        return this.lineManager.g;
+    }
+    fun getBlue(){
+        return this.lineManager.b;
+    }
+    fun setOpacity(opacity){
+        this.lineManager.opacity = opacity;
+        this.lineManager.update();
+    }
+    fun getOpacity(){
+        return this.lineManager.opacity;
+    }
+    fun getRGBAList(){
+        return[this.lineManager.r,this.lineManager.g,this.lineManager.b,this.lineManager.opacity];
+    }
+    fun setRenderThroughBlocks(rtb){
+        this.lineManager.renderThroughBlocks = rtb;
+        this.lineManager.update();
+    }
+    fun shouldRenderThroughBlocks(){
+        return this.lineManager.renderThroughBlocks;
+    }
+}
