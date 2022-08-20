@@ -3,7 +3,7 @@ Arucas script to generate cities
 
 Based on City Generator by ProbableTrain https://github.com/ProbableTrain/MapGenerator
 
-#Installation
+# Installation
 
 1. Install latest version of essentialClient https://github.com/senseiwells/EssentialClient and make sure you have world edit (this was the easiest way to do some things so world edit is required)
 2. Locate script folder (.minecraft\config\EssentialClient\Scripts)
